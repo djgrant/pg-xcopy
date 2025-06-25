@@ -1,12 +1,11 @@
 # pg-xmat
 
-Cross-database materialisations for Postgres.
+**Cross-database materialisations for PostgreSQL.**
 
 pg-xmat lets you define jobs for transforming and streaming data between different database servers.
 
 It is a good choice when more than one of the following are requirements:
 - one-off/batch jobs
-- simple transformations
 - moving data between database instances
 - use-cases not suitable for FDWs
 - programmatic use
