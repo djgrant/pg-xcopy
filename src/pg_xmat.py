@@ -3,12 +3,14 @@ import fnmatch
 import subprocess
 import importlib.util
 import sys
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional, Union, TypeVar
 from psycopg2.extensions import connection
 from pydantic import ValidationError
 
 import utils
 from schemas import Job, Jobs, Query
+
+T = TypeVar('T')
 
 def _build_where_clause(filters: Optional[Dict[str, Any]]) -> str:
     """Builds a SQL WHERE clause from a filter dictionary."""
@@ -71,11 +73,27 @@ def _build_select_list(
     return ", ".join(select_expressions)
 
 
+def _validate_schema(data: Union[T, Dict[str, Any]], schema_class: type[T]) -> T:
+    """Validate and convert data to schema object."""
+    try:
+        if isinstance(data, dict):
+            return schema_class(**data)
+        return data
+    except ValidationError as e:
+        print(f"Error: Invalid {schema_class.__name__} configuration:")
+        for error in e.errors():
+            location = " -> ".join(str(loc) for loc in error["loc"])
+            field_type = error["type"]
+            if field_type == "missing":
+                print(f"  {location}: Missing required field")
+            else:
+                print(f"  {location}: {error['msg']}")
+        sys.exit(1)
+
+
 def run_job(job: Union[Job, Dict[str, Any]], verbose: bool = False):
     """Handles a single data transfer job."""
-    # Convert plain dict to Job object if needed
-    if isinstance(job, dict):
-        job = Job(**job)
+    job = _validate_schema(job, Job)
 
     source_conn = utils.get_db_connection(job.source.database, "Source")
     target_conn = utils.get_db_connection(job.target.database, "Target")
@@ -170,8 +188,7 @@ def run_jobs(
         verbose: Enable verbose logging.
     """
 
-    if isinstance(jobs, dict):
-        jobs = Jobs(jobs=jobs)
+    jobs = _validate_schema(jobs, Jobs)
 
     matched_jobs = {
         name: job
@@ -217,7 +234,6 @@ def main():
         config_module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(config_module)
         JOBS = config_module.JOBS
-        run_jobs(args.job_pattern, JOBS, args.verbose)
 
     except FileNotFoundError:
         print(f"Error: Configuration file not found at '{args.config}'")
@@ -227,23 +243,4 @@ def main():
         print(f"Error: 'JOBS' dictionary not found in '{args.config}'")
         sys.exit(1)
 
-    except ValidationError as e:
-        print(f"Error: Invalid configuration in '{args.config}':")
-        for error in e.errors():
-            location = " -> ".join(str(loc) for loc in error["loc"])
-            field_type = error["type"]
-
-            if field_type == "string_type" and "database" in location:
-                env_var = (
-                    "SOURCE_DATABASE_URL"
-                    if "source" in location
-                    else "TARGET_DATABASE_URL"
-                )
-                print(
-                    f"  {location}: Missing required environment variable '{env_var}' (database URL cannot be None)"
-                )
-            elif field_type == "missing":
-                print(f"  {location}: Missing required field")
-            else:
-                print(f"  {location}: {error['msg']}")
-        sys.exit(1)
+    run_jobs(args.job_pattern, JOBS, args.verbose)
