@@ -32,4 +32,4 @@ dev = ["ruff"]
 where = ["src"]
 
 [project.scripts]
-pg-xmat = "pg_xmat.main:main"
+pg-xmat = "pg_xmat:main"

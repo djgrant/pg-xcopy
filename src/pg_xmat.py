@@ -7,8 +7,8 @@ from typing import Any, Dict, Optional, Union
 from psycopg2.extensions import connection
 from pydantic import ValidationError
 
-from . import utils
-from .schemas import Job, Jobs, Query
+import utils
+from schemas import Job, Jobs, Query
 
 def _build_where_clause(filters: Optional[Dict[str, Any]]) -> str:
     """Builds a SQL WHERE clause from a filter dictionary."""
