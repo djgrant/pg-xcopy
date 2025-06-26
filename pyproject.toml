@@ -4,9 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pg-xmat"
-version = "0.1.2"
+version = "0.2.0"
 authors = [{ name = "Daniel Grant" }]
-description = "Cross-database materialisations for Postgres"
+description = "Cross-database materialisations for PostgreSQL"
 readme = "README.md"
 requires-python = ">=3.7"
 dependencies = ["psycopg2-binary", "pydantic"]

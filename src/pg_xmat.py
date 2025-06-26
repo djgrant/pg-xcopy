@@ -219,7 +219,7 @@ def main():
         help="The pattern to match job names against (e.g., mat:*, shift:reporting).",
     )
     parser.add_argument(
-        "-c", "--config", default="config.py", help="Path to the configuration file."
+        "-c", "--config", default="pg_xmat_jobs.py", help="Path to the job configuration file."
     )
     parser.add_argument(
         "-v", "--verbose", action="store_true", help="Enable verbose logging."
