@@ -1,4 +1,4 @@
-.PHONY: install lint format
+.PHONY: install lint format publish
 
 install:
 	pip install -e .[dev]
@@ -8,3 +8,7 @@ lint:
 
 format:
 	ruff format .
+
+publish:
+	python -m build
+	python -m twine upload dist/*
