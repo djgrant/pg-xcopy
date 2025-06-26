@@ -1,17 +1,20 @@
-.PHONY: install lint format build publish
+.PHONY: install format lint test build publish
 
 install:
 	pip install -e .[dev]
 
+format:
+	ruff format .
+
 lint:
 	ruff check .
 
-format:
-	ruff format .
+test:
+	python3 -m unittest discover -s tests -t .
 
 build:
 	rm -rf dist/
 	python -m build
 
-publish: lint build
+publish: install lint test build
 	python -m twine upload dist/*

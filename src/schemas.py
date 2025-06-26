@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 
 class Database(BaseModel):
@@ -8,15 +8,11 @@ class Database(BaseModel):
 
 
 class Query(BaseModel):
-    select: Optional[Dict[str, str]] = {}
-    where: Optional[Dict[str, Any]] = {}
+    select: Optional[Dict[str, Optional[Union[str, bool]]]] = {}
+    where: Optional[Union[str, Dict[str, Any]]] = {}
 
 
 class Job(BaseModel):
     source: Database
     target: Database
     tables: Dict[str, Query]
-
-
-class Jobs(BaseModel):
-    jobs: Dict[str, Job]

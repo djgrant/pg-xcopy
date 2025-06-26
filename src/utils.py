@@ -1,6 +1,7 @@
 import sys
 import subprocess
 import re
+from typing import List
 import psycopg2
 from psycopg2.extras import DictCursor
 
@@ -111,22 +112,38 @@ def teardown_and_create_schemas(conn, schemas):
 
 
 def create_local_table_structure(
-    source_conn, target_conn, source_schema, target_schema, table_name, verbose=False
+    source_conn,
+    target_conn,
+    source_schema,
+    target_schema,
+    table_name,
+    columns_to_create: List[str],
+    verbose=False,
 ):
-    """Creates a local table structure in the target DB based on the source DB's definition."""
+    """
+    Creates a local table structure in the target DB using an explicit list of columns.
+    The data types are looked up from the source table.
+    """
     q_target_schema = quote_sql_identifier(target_schema)
     q_table_name = quote_sql_identifier(table_name)
 
-    columns = get_table_columns(source_conn, source_schema, table_name)
-    if not columns:
-        print(
-            f"  - WARNING: Could not get column info for {source_schema}.{table_name}. Skipping."
-        )
+    if not columns_to_create:
+        print(f"  - INFO: No columns selected for table {target_schema}.{table_name}. Skipping creation.")
         return
 
-    column_defs = [
-        f"{quote_sql_identifier(c['column_name'])} {c['data_type']}" for c in columns
-    ]
+    source_column_info = {
+        c['column_name']: c['data_type']
+        for c in get_table_columns(source_conn, source_schema, table_name)
+    }
+
+    column_defs = []
+    for col_name in columns_to_create:
+        data_type = source_column_info.get(col_name)
+        if not data_type:
+            print(f"  - ERROR: Could not find data type for column '{col_name}' in source table {source_schema}.{table_name}. Skipping table creation.", file=sys.stderr)
+            return
+        column_defs.append(f"{quote_sql_identifier(col_name)} {data_type}")
+
     create_sql = (
         f"CREATE TABLE {q_target_schema}.{q_table_name} ({', '.join(column_defs)})"
     )
@@ -153,8 +170,8 @@ def get_all_relation_names(conn, schema_name):
         return [row[0] for row in cur.fetchall()]
 
 
-def replicate_constraints_local(
-    source_db_url, target_db_url, source_schema, target_schema
+def replicate_constraints(
+    source_conn, target_conn, source_schema, target_schema
 ):
     """
     Replicates constraints (PKs, FKs, indexes, etc.) from a source schema
@@ -162,25 +179,29 @@ def replicate_constraints_local(
     """
     print(f"Replicating constraints: {source_schema} -> {target_schema}")
 
-    pg_dump_cmd = [
-        "pg_dump",
-        "--section=post-data",
-        "-d",
-        source_db_url,
-        "--schema",
-        source_schema,
-    ]
+    with source_conn.cursor() as cur:
+        cur.execute("""
+            SELECT 'ALTER TABLE ' || quote_ident(nspname) || '.' || quote_ident(relname) || ' ADD CONSTRAINT ' || quote_ident(conname) || ' ' || pg_get_constraintdef(pg_constraint.oid) || ';' as sql
+            FROM pg_constraint
+            JOIN pg_class ON conrelid = pg_class.oid
+            JOIN pg_namespace ON pg_class.relnamespace = pg_namespace.oid
+            WHERE nspname = %s
+        """, (source_schema,))
+        constraints = [row[0] for row in cur.fetchall()]
 
-    sed_script = (
-        rf"s/SET search_path = {source_schema},/SET search_path = {quote_sql_identifier(target_schema)},/g; "
-        rf"s/ALTER TABLE ONLY {source_schema}\\. /ALTER TABLE ONLY {quote_sql_identifier(target_schema)}./g"
-    )
+    with target_conn.cursor() as cur:
+        for constraint in constraints:
+            # This will fail if the columns/tables for constraints don't exist, which is expected
+            # when using a select transformation. This part of the logic might need to be skipped
+            # in such cases, but for now, we let it fail if a constraint is invalid.
+            try:
+                cur.execute(constraint.replace(source_schema, target_schema))
+            except psycopg2.Error as e:
+                # Safely get the error message
+                pg_error_msg = e.pgerror.strip() if e.pgerror else str(e)
+                print(f"  - INFO: Could not replicate constraint. This may be expected if columns were transformed. Error: {pg_error_msg}", file=sys.stderr)
+                target_conn.rollback() # Rollback the failed constraint transaction
+            else:
+                target_conn.commit()
 
-    sed_cmd = ["sed", "-E", sed_script]
-    psql_cmd = ["psql", "-v", "ON_ERROR_STOP=1", "-d", target_db_url]
-
-    dumper = subprocess.Popen(pg_dump_cmd, stdout=subprocess.PIPE)
-    sed = subprocess.Popen(sed_cmd, stdin=dumper.stdout, stdout=subprocess.PIPE)
-    run_command(psql_cmd, stdin_pipe=sed.stdout)
-    dumper.wait()
     print("Constraint replication complete.")
