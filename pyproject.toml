@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pg-xmat"
-version = "0.1.0"
+version = "0.1.2"
 authors = [{ name = "Daniel Grant" }]
 description = "Cross-database materialisations for Postgres"
 readme = "README.md"
@@ -28,8 +28,9 @@ classifiers = [
 [project.optional-dependencies]
 dev = ["ruff", "twine", "build"]
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[tool.setuptools]
+package-dir = { "" = "src" }
+py-modules = ["pg_xmat", "schemas", "utils"]
 
 [project.scripts]
 pg-xmat = "pg_xmat:main"
