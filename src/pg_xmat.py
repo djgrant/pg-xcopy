@@ -158,7 +158,9 @@ def run_job(job: Union[Job, Dict[str, Any]], verbose: bool = False):
         target_conn.close()
 
 
-def run_jobs(job_pattern: str, jobs: Union[Jobs, Dict[str, Any]], verbose: bool = False):
+def run_jobs(
+    job_pattern: str, jobs: Union[Jobs, Dict[str, Any]], verbose: bool = False
+):
     """
     Finds and runs all jobs in a configuration dictionary that match a pattern.
 
@@ -228,15 +230,20 @@ def main():
     except ValidationError as e:
         print(f"Error: Invalid configuration in '{args.config}':")
         for error in e.errors():
-            location = " -> ".join(str(loc) for loc in error['loc'])
-            field_type = error['type']
+            location = " -> ".join(str(loc) for loc in error["loc"])
+            field_type = error["type"]
 
-            if field_type == 'string_type' and 'database' in location:
-                env_var = 'SOURCE_DATABASE_URL' if 'source' in location else 'TARGET_DATABASE_URL'
-                print(f"  {location}: Missing required environment variable '{env_var}' (database URL cannot be None)")
-            elif field_type == 'missing':
+            if field_type == "string_type" and "database" in location:
+                env_var = (
+                    "SOURCE_DATABASE_URL"
+                    if "source" in location
+                    else "TARGET_DATABASE_URL"
+                )
+                print(
+                    f"  {location}: Missing required environment variable '{env_var}' (database URL cannot be None)"
+                )
+            elif field_type == "missing":
                 print(f"  {location}: Missing required field")
             else:
                 print(f"  {location}: {error['msg']}")
         sys.exit(1)
-
