@@ -128,11 +128,13 @@ def create_local_table_structure(
     q_table_name = quote_sql_identifier(table_name)
 
     if not columns_to_create:
-        print(f"  - INFO: No columns selected for table {target_schema}.{table_name}. Skipping creation.")
+        print(
+            f"  - INFO: No columns selected for table {target_schema}.{table_name}. Skipping creation."
+        )
         return
 
     source_column_info = {
-        c['column_name']: c['data_type']
+        c["column_name"]: c["data_type"]
         for c in get_table_columns(source_conn, source_schema, table_name)
     }
 
@@ -140,7 +142,10 @@ def create_local_table_structure(
     for col_name in columns_to_create:
         data_type = source_column_info.get(col_name)
         if not data_type:
-            print(f"  - ERROR: Could not find data type for column '{col_name}' in source table {source_schema}.{table_name}. Skipping table creation.", file=sys.stderr)
+            print(
+                f"  - ERROR: Could not find data type for column '{col_name}' in source table {source_schema}.{table_name}. Skipping table creation.",
+                file=sys.stderr,
+            )
             return
         column_defs.append(f"{quote_sql_identifier(col_name)} {data_type}")
 
@@ -170,9 +175,7 @@ def get_all_relation_names(conn, schema_name):
         return [row[0] for row in cur.fetchall()]
 
 
-def replicate_constraints(
-    source_conn, target_conn, source_schema, target_schema
-):
+def replicate_constraints(source_conn, target_conn, source_schema, target_schema):
     """
     Replicates constraints (PKs, FKs, etc.) and standalone indexes from a source schema
     to a target schema.
@@ -182,24 +185,30 @@ def replicate_constraints(
     ddl_statements = []
     with source_conn.cursor() as cur:
         # Get constraints (PKs, FKs, CHECKs, etc.)
-        cur.execute("""
+        cur.execute(
+            """
             SELECT 'ALTER TABLE ' || quote_ident(nspname) || '.' || quote_ident(relname) || ' ADD CONSTRAINT ' || quote_ident(conname) || ' ' || pg_get_constraintdef(pg_constraint.oid) || ';' as sql
             FROM pg_constraint
             JOIN pg_class ON conrelid = pg_class.oid
             JOIN pg_namespace ON pg_class.relnamespace = pg_namespace.oid
             WHERE nspname = %s
-        """, (source_schema,))
+        """,
+            (source_schema,),
+        )
         ddl_statements.extend([row[0] for row in cur.fetchall()])
 
         # Get standalone indexes (indexes not created as part of a constraint)
-        cur.execute("""
+        cur.execute(
+            """
             SELECT pg_get_indexdef(i.indexrelid) || ';' as sql
             FROM pg_index i
             JOIN pg_class c_table ON c_table.oid = i.indrelid
             JOIN pg_namespace n ON n.oid = c_table.relnamespace
             LEFT JOIN pg_constraint con ON con.conindid = i.indexrelid
             WHERE n.nspname = %s AND con.conindid IS NULL
-        """, (source_schema,))
+        """,
+            (source_schema,),
+        )
         ddl_statements.extend([row[0] for row in cur.fetchall()])
 
     with target_conn.cursor() as cur:
@@ -214,8 +223,11 @@ def replicate_constraints(
             except psycopg2.Error as e:
                 # Safely get the error message
                 pg_error_msg = e.pgerror.strip() if e.pgerror else str(e)
-                print(f"  - INFO: Could not replicate constraint or index. This may be expected if columns were transformed. Error: {pg_error_msg}", file=sys.stderr)
-                target_conn.rollback() # Rollback the failed DDL transaction
+                print(
+                    f"  - INFO: Could not replicate constraint or index. This may be expected if columns were transformed. Error: {pg_error_msg}",
+                    file=sys.stderr,
+                )
+                target_conn.rollback()  # Rollback the failed DDL transaction
             else:
                 target_conn.commit()
 

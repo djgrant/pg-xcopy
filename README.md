@@ -1,24 +1,30 @@
-# pg-xmat
+# pg-xcopy
 
-**Cross-database materialisations for PostgreSQL.**
+Postgres `\copy` on steroids.
 
-pg-xmat lets you define jobs for transforming and streaming data between different database servers.
+A lightweight configuration-driven tool for performing powerful, cross-database transfers, supporting:
 
-It is a good choice when more than one of the following are requirements:
-- one-off/batch jobs
-- moving data between database instances
-- use-cases not suitable for FDWs
-- programmatic use
+- **Declarative Transfers**: Orchestrates cross-database transfers from simple configuration
+- **Filtering**: Transfers a subset of rows (e.g., `WHERE tenant_id = 123`)
+- **Transformation**: Changes the values of columns in flight (e.g., `LOWER(email)`)
+- **Repeatability**: Defines jobs in code that can be run on-demand or as part of a larger workflow
 
-## Installation
+Suitable for tasks sucha as:
 
-```bash
-pip install pg-xmat
-```
+- Creating anonymized staging environments
+- Extracting tenant-specific data into separate databases
+- Performing surgical data migrations between microservices
+- Time-shifting datasets for stable testing environments
 
 ## Quick Start
 
-1. Define jobs (`pg_xmat_jobs.py`):
+1. Install
+
+```bash
+pip install pg-xcopy
+```
+
+2.  Define jobs in a file (e.g., `pg_xcopy_jobs.py`):
 
 ```python
 import os
@@ -34,51 +40,78 @@ JOBS = {
             "users": {"where": {"active": True}},
             "profiles": {
                 "where": {"user_id": [1, 2, 3, 4]},
-                "select": { "inserted_at": "current_date" }
+                "transform": { "inserted_at": "current_date" }
             }
         }
     }
 }
 ```
 
-2. Run the job:
+3.  Run the job:
 
 ```bash
-pg-xmat "export:users"
+pg-xcopy "export:users" -c pg_xcopy_jobs.py
 
-# or run all jobs matching glob expression
-pg-xmat "export:*"
+# or run all jobs matching a glob expression
+pg-xcopy "export:*" -c pg_xcopy_jobs.py
 ```
 
 ## How it works
 
-1. **Schema Preparation**: Drops and recreates target schema, then replicates table structures from source.
-2. **Query Building**: Constructs filtered SELECT queries based on your `where` and `select` configurations.
-3. **Streaming Transfer**: Uses PostgreSQL's `COPY` command to stream data directly between databases.
-4. **Constraint Replication**: Replicates Primary Keys, Foreign Keys, and other constraints from the source tables to the newly created target tables.
+pg-xcopy orchestrates psql to build an efficient data pipeline between the source and target databases.
 
-The process is designed to be fast and maintain data integrity by leveraging PostgreSQL's native bulk operations rather than row-by-row processing.
+1.  **Schema Preparation**: Drops and recreates the target schema, then replicates table structures from the source
+2.  **Query Building**: Constructs filtered `SELECT` queries based on your `where` and `transform` configurations
+3.  **Streaming Transfer**: Streams data directly from the source to the target, without writing temporary files to disk
+4.  **Constraint Replication**: Replicates primary keys, foreign keys, indexes, and other constraints from the source tables
 
-## CLI Usage
+This architecture allows pg-xcopy to stream data between any two databases the client can connect to across networks without requiring superuser privileges on the database server.
+
+## Comparisons
+
+**1. `pg_dump` and `psql`**
+
+-   **Ideal for:** Creating complete structural and data replicas of a database, schema, or table.
+-   **Not ideal for:** Transferring a filtered or transformed subset of data from the source.
+
+**2. Manual `\copy` Scripts**
+
+-   **Ideal for:** Performing a single, specific data transfer with custom logic in an imperative script.
+-   **Not ideal for:** Repeatable jobs that include schema and constraint replication.
+
+**3. dbt / Dataform**
+
+-   **Ideal for:** Modeling and transforming data that has already been loaded into a target database.
+-   **Not ideal for:** Extracting and loading data from a separate source database.
+
+**4. Foreign Data Wrappers (`postgres_fdw`)**
+
+-   **Ideal for:** Executing live, online queries against tables in a remote database as if they were local.
+-   **Not ideal for:** Performing efficient, offline bulk data transfers or jobs that require schema replication.
+
+**5. Airflow / Dagster / Prefect**
+
+-   **Ideal for:** Orchestrating complex, multi-dependency workflows that require scheduling, monitoring, and retries.
+-   **Not ideal for:** Simple, point-to-point data transfers that do not require a separate, persistent orchestration infrastructure.
+
+## CLI API
 
 ```bash
-pg-xmat [job_pattern] [options]
+pg-xcopy [job_pattern] [options]
 
 Arguments:
-  job_pattern           Glob pattern to match job names (e.g., "export:*", "mat:users")
+  job_pattern           Glob pattern to match job names (e.g., "export:*")
 
 Options:
-  -c, --config FILE     Path to configuration file (default: pg_xmat_jobs.py)
+  -c, --config FILE     Path to configuration file (default: pg_xcopy_jobs.py)
   -v, --verbose         Enable verbose logging
   -h, --help            Show help message
 ```
 
 ## Python API
 
-### Basic Usage
-
 ```python
-from pg_xmat import run_job, run_jobs
+from pg_xcopy import run_job, run_jobs
 
 # Run a single job
 job_config = {
@@ -89,10 +122,9 @@ job_config = {
 run_job(job_config, verbose=True)
 
 # Run multiple jobs with pattern matching
-jobs_config = {"export:users": job_config, "export:orders": {...}}
-run_jobs("export:*", jobs_config, verbose=True)
+all_jobs = {"export:users": job_config, "export:orders": {...}}
+run_jobs("export:*", all_jobs, verbose=True)
 ```
-
 
 ## Job API
 
@@ -111,15 +143,15 @@ JOBS = {
         },
         "tables": {
             "table_name": {
-                "where": {...},     # Optional: Filter conditions
-                "select": {...}     # Optional: Column transformations
+                "where": {...},      # Optional: Filter conditions
+                "transform": {...}   # Optional: Column transformations/omissions
             }
         }
     }
 }
 ```
 
-### Where Filters
+### Where filters
 
 Filter data during transfer using the structured dictionary syntax or a raw SQL string.
 
@@ -143,38 +175,24 @@ For common equality, range, and `IN` clauses, use the dictionary format:
 }
 ```
 
-#### Raw SQL Filter
+#### Raw SQL filter
 
-For more complex conditions, provide a raw SQL string. The string is used as the body of the `WHERE` clause.
+For more complex conditions, provide a raw SQL string as the body of the `WHERE` clause:
 
 ```python
 "where": "is_active = true AND (category = 'A' OR name LIKE 'Test%')"
 ```
 
-### Select Transformations
+### Column transformations
 
-The `select` config allows you to precisely control the columns in the target table. It has two modes: exclusive (default) and inclusive (using a `*` wildcard).
+By default, `pg-xcopy` copies all columns from the source table to the target. The `transform` configuration allows you to specify exceptions to this rule.
 
-#### Exclusive Column Selection (Default)
-If the `select` dictionary does not contain a `"*"` key, it acts as an **exclusive list**. Only the columns defined in the dictionary will be created in the target table. This is useful for creating a subset of the original table.
-
-```python
-"select": {
-    # The target table will have only two columns: `name` and `email`.
-    "name": "UPPER(name)",               # Transform the 'name' column
-    "email": "LOWER(email)"              # Transform the 'email' column
-}
-```
-
-#### Select *
-
-To transfer all source columns while transforming or excluding a few, add `"*": True` to the `select` dictionary.
+-   **To transform a column's value**, provide a SQL expression as a string.
+-   **To omit a column from the target table**, provide `None` as the value.
+-   **To keep a column as-is**, simply do not include it in the `transform` dictionary.
 
 ```python
-"select": {
-    # Include all columns from the source table by default
-    "*": True,
-
+"transform": {
     # Transform the 'email' column using a SQL function
     "email": "LOWER(email)",
 
@@ -185,9 +203,9 @@ To transfer all source columns while transforming or excluding a few, add `"*": 
 }
 ```
 
-### Wildcard Tables
+### Wildcard tables
 
-Process all tables in a schema:
+Apply a configuration to all tables in a schema:
 
 ```python
 "tables": {
@@ -197,34 +215,30 @@ Process all tables in a schema:
 }
 ```
 
-### Constraint Replication
+### Constraint replication
 
-After transferring data, pg-xmat attempts to replicate constraints from the source to the target tables.
+After transferring data, `pg-xcopy` attempts to replicate constraints from the source to the target tables.
 
 **What is Replicated:**
-- Primary Keys
-- Foreign Keys
-- Unique Constraints
-- Check Constraints
+
+-   Primary Keys
+-   Foreign Keys
+-   Unique Constraints
+-   Check Constraints
+-   Standalone Indexes
 
 **What is NOT Replicated:**
-- Triggers
-- Row-Level Security Policies
 
-#### Caveats and Limitations
+-   Triggers
+-   Row-Level Security Policies
 
-Constraint replication is **best-effort** and works best when the target table structure is a mirror of the source. The process will fail for a specific constraint if `select` transformations alter the table's structure in a way that makes the constraint invalid.
+#### Caveats
 
-Common failure scenarios include:
-- **Excluding a column** that is part of a constraint (e.g., excluding a primary key column or a foreign key column).
-- **Renaming a column** that is referenced in a constraint. The replication attempts to use the original column name, which no longer exists in the target table.
-- **Excluding a referenced table**. A foreign key from `orders` to `customers` cannot be created if the `customers` table was not also transferred.
-
-When a constraint fails to apply, `pg-xmat` prints an informational warning and **continues the job**. This is often expected behavior, as a transformed or subsetted table may not be able to support the same constraints as the original.
+Constraint replication is **best-effort**. It will fail for a specific constraint if `transform` alters the table's structure in a way that makes the constraint invalid (e.g., omitting a column that is part of a primary key). When a failure occurs, `pg-xcopy` prints a warning and continues the job.
 
 ## Examples
 
-### Data Migration
+### Data migration
 
 ```python
 MIGRATION_JOB = {
@@ -238,7 +252,7 @@ MIGRATION_JOB = {
 }
 ```
 
-### Data Anonymization
+### Data anonymisation
 
 ```python
 ANONYMIZE_JOB = {
@@ -246,10 +260,7 @@ ANONYMIZE_JOB = {
     "target": {"database": TEST_DB_URL, "schema": "public"},
     "tables": {
         "users": {
-            "select": {
-                # Keep all columns except the ones we transform or exclude.
-                # This ensures columns like `id` and `created_at` are copied.
-                "*": True,
+            "transform": {
                 # Replace real emails with user1@example.com, user2@example.com, etc.
                 "email": "'user' || id || '@example.com'",
                 # Exclude personal phone numbers from the test database
@@ -262,7 +273,7 @@ ANONYMIZE_JOB = {
 }
 ```
 
-### Time-shifted Data
+### Time-shifted data
 
 ```python
 SHIFT_JOB = {
@@ -271,10 +282,9 @@ SHIFT_JOB = {
     "tables": {
         # Apply transformations to all tables in the 'events' schema
         "*": {
-            "select": {
-                # Copy all columns from each source table
-                "*": True,
+            "transform": {
                 # Shift timestamp columns if they exist in a table.
+                # Other columns will be copied as-is.
                 "created_at": "created_at + (CURRENT_DATE - DATE '2023-06-01')",
                 "updated_at": "updated_at + (CURRENT_DATE - DATE '2023-06-01')"
             }
@@ -283,7 +293,7 @@ SHIFT_JOB = {
 }
 ```
 
-### Multi-tenant Data Extraction
+### Multi-tenant data extraction
 
 ```python
 TENANT_EXPORT = {
@@ -301,13 +311,11 @@ TENANT_EXPORT = {
 
 - Python 3.7+
 - PostgreSQL client tools (`psql`)
-- Network access between source and target databases
 
 ## Security
 
 - Database passwords are automatically redacted in log output
-- SQL identifiers are properly quoted to prevent injection
-- Environment variables recommended for sensitive connection strings
+- SQL identifiers are quoted to prevent injection
 
 ## License
 

@@ -2,6 +2,7 @@ import unittest
 import os
 import psycopg2
 import sys
+import pg_xcopy
 from contextlib import contextmanager
 from psycopg2.extensions import connection as Connection
 
@@ -10,10 +11,10 @@ from .test_config import (
     TARGET_DB_URL,
 )
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
-import pg_xmat
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
-class PgXmatIntegrationTestBase(unittest.TestCase):
+
+class PgXCopyIntegrationTestBase(unittest.TestCase):
     source_conn: Connection
     target_conn: Connection
 
@@ -26,9 +27,9 @@ class PgXmatIntegrationTestBase(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         """Close connections once per test class."""
-        if hasattr(cls, 'source_conn') and cls.source_conn:
+        if hasattr(cls, "source_conn") and cls.source_conn:
             cls.source_conn.close()
-        if hasattr(cls, 'target_conn') and cls.target_conn:
+        if hasattr(cls, "target_conn") and cls.target_conn:
             cls.target_conn.close()
 
     def setUp(self):
@@ -54,7 +55,7 @@ class PgXmatIntegrationTestBase(unittest.TestCase):
         raise NotImplementedError("Subclasses must implement setup_source_data()")
 
     def run_job(self, job_name, jobs_config):
-        pg_xmat.run_jobs(job_name, jobs_config)
+        pg_xcopy.run_jobs(job_name, jobs_config)
 
     @contextmanager
     def get_target_cursor(self):
@@ -63,21 +64,40 @@ class PgXmatIntegrationTestBase(unittest.TestCase):
 
     def assertSchemaExists(self, schema_name, msg=None):
         with self.target_conn.cursor() as cursor:
-            cursor.execute("SELECT 1 FROM information_schema.schemata WHERE schema_name = %s;", (schema_name,))
-            self.assertIsNotNone(cursor.fetchone(), msg or f"Schema '{schema_name}' should exist but doesn't.")
+            cursor.execute(
+                "SELECT 1 FROM information_schema.schemata WHERE schema_name = %s;",
+                (schema_name,),
+            )
+            self.assertIsNotNone(
+                cursor.fetchone(),
+                msg or f"Schema '{schema_name}' should exist but doesn't.",
+            )
 
     def assertTableExists(self, schema_name, table_name, msg=None):
         with self.target_conn.cursor() as cursor:
-            cursor.execute("SELECT 1 FROM information_schema.tables WHERE table_schema = %s AND table_name = %s;", (schema_name, table_name))
-            self.assertIsNotNone(cursor.fetchone(), msg or f"Table '{schema_name}.{table_name}' should exist but doesn't.")
+            cursor.execute(
+                "SELECT 1 FROM information_schema.tables WHERE table_schema = %s AND table_name = %s;",
+                (schema_name, table_name),
+            )
+            self.assertIsNotNone(
+                cursor.fetchone(),
+                msg or f"Table '{schema_name}.{table_name}' should exist but doesn't.",
+            )
 
     def assertIndexExists(self, schema_name, table_name, index_name, msg=None):
         with self.target_conn.cursor() as cursor:
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT 1 FROM pg_indexes
                 WHERE schemaname = %s AND tablename = %s AND indexname = %s;
-            """, (schema_name, table_name, index_name))
-            self.assertIsNotNone(cursor.fetchone(), msg or f"Index '{index_name}' on table '{schema_name}.{table_name}' should exist but doesn't.")
+            """,
+                (schema_name, table_name, index_name),
+            )
+            self.assertIsNotNone(
+                cursor.fetchone(),
+                msg
+                or f"Index '{index_name}' on table '{schema_name}.{table_name}' should exist but doesn't.",
+            )
 
     def assertTableRowCount(self, schema_name, table_name, expected_count, msg=None):
         safe_table_name = f'"{schema_name}"."{table_name}"'
@@ -85,30 +105,44 @@ class PgXmatIntegrationTestBase(unittest.TestCase):
             cursor.execute(f"SELECT COUNT(*) FROM {safe_table_name};")
             count_result = cursor.fetchone()
             # The unittest assertion gives a nice test failure message.
-            self.assertIsNotNone(count_result, f"Query for row count on '{safe_table_name}' returned no rows.")
+            self.assertIsNotNone(
+                count_result,
+                f"Query for row count on '{safe_table_name}' returned no rows.",
+            )
             # This plain assert helps the static type checker understand the type is now non-nullable.
             assert count_result is not None
             count = count_result[0]
-            self.assertEqual(count, expected_count, msg or f"Table '{safe_table_name}' has wrong row count.")
+            self.assertEqual(
+                count,
+                expected_count,
+                msg or f"Table '{safe_table_name}' has wrong row count.",
+            )
 
     def get_table_columns(self, schema_name, table_name, conn=None):
         connection = conn or self.target_conn
         with connection.cursor() as cursor:
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT column_name
                 FROM information_schema.columns
                 WHERE table_schema = %s AND table_name = %s
                 ORDER BY column_name;
-            """, (schema_name, table_name))
+            """,
+                (schema_name, table_name),
+            )
             return {row[0] for row in cursor.fetchall()}
 
-    def get_row_where(self, schema_name, table_name, select_columns, where_conditions, conn=None):
+    def get_row_where(
+        self, schema_name, table_name, select_columns, where_conditions, conn=None
+    ):
         connection = conn or self.target_conn
         safe_select_cols = ", ".join(f'"{col}"' for col in select_columns)
         safe_table_name = f'"{schema_name}"."{table_name}"'
         where_clause_parts = [f'"{key}" = %s' for key in where_conditions.keys()]
         where_clause = " AND ".join(where_clause_parts)
-        query = f"SELECT {safe_select_cols} FROM {safe_table_name} WHERE {where_clause};"
+        query = (
+            f"SELECT {safe_select_cols} FROM {safe_table_name} WHERE {where_clause};"
+        )
         params = tuple(where_conditions.values())
         with connection.cursor() as cursor:
             cursor.execute(query, params)

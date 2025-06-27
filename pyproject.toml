@@ -3,10 +3,10 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pg-xmat"
+name = "pg-xcopy"
 version = "0.3.0"
 authors = [{ name = "Daniel Grant" }]
-description = "Cross-database materialisations for PostgreSQL"
+description = "Declarative cross-database data transfers for Postgres"
 readme = "README.md"
 requires-python = ">=3.7"
 dependencies = ["psycopg2-binary", "pydantic"]
@@ -30,7 +30,7 @@ dev = ["ruff", "twine", "build", "python-dotenv", "dotenv"]
 
 [tool.setuptools]
 package-dir = { "" = "src" }
-py-modules = ["pg_xmat", "schemas", "utils"]
+py-modules = ["pg_xcopy", "schemas", "utils"]
 
 [project.scripts]
-pg-xmat = "pg_xmat:main"
+pg-xcopy = "pg_xcopy:main"

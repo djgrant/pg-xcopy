@@ -8,6 +8,7 @@ from .test_config import (
     TARGET_DB_NAME,
 )
 
+
 def _setUpDatabases():
     """Creates the databases needed for the entire test suite."""
     print("Creating test databases for the suite...")
@@ -23,6 +24,7 @@ def _setUpDatabases():
     # IMPORTANT: Register the teardown to run when the process exits.
     atexit.register(_tearDownDatabases)
 
+
 def _tearDownDatabases():
     """This function will be registered to run at interpreter exit."""
     print("\n(atexit) Dropping test databases...")
@@ -36,5 +38,6 @@ def _tearDownDatabases():
         print("(atexit) Test databases dropped.")
     except psycopg2.Error as e:
         print(f"(atexit) Could not drop databases: {e}")
+
 
 _setUpDatabases()
