@@ -4,10 +4,9 @@ Postgres `\copy` on steroids.
 
 A lightweight configuration-driven tool for performing powerful, cross-database transfers, supporting:
 
-- **Declarative Transfers**: Orchestrates cross-database transfers from simple configuration
 - **Filtering**: Transfers a subset of rows (e.g., `WHERE tenant_id = 123`)
 - **Transformation**: Changes the values of columns in flight (e.g., `LOWER(email)`)
-- **Repeatability**: Defines jobs in code that can be run on-demand or as part of a larger workflow
+- **Declarative**: Defines jobs in code that can be run on-demand or as part of a larger workflow
 
 Suitable for tasks sucha as:
 
