@@ -8,7 +8,7 @@ class Database(BaseModel):
 
 
 class Query(BaseModel):
-    select: Optional[Dict[str, Optional[Union[str, bool]]]] = {}
+    transform: Optional[Dict[str, Optional[str]]] = {}
     where: Optional[Union[str, Dict[str, Any]]] = {}
 
 

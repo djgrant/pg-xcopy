@@ -42,7 +42,7 @@ class TestPgXmat(PgXmatIntegrationTestBase):
 
 
     def test_full_data_transfer(self):
-        """Tests transferring a table with no 'select' config, mirroring it completely."""
+        """Tests transferring a table with no config, mirroring it completely."""
         jobs_config = {
             "sales_reporting": {
                 "source": {"database": SOURCE_DB_URL, "schema": "sales"},
@@ -57,19 +57,25 @@ class TestPgXmat(PgXmatIntegrationTestBase):
         self.assertTableRowCount("reporting", "customers", 3)
         columns = self.get_table_columns("reporting", "customers")
         self.assertEqual(columns, {"id", "name", "email", "is_active"}, "All columns should be mirrored.")
+        # Verify that the primary key (constraint) and standalone index were replicated
         self.assertIndexExists("reporting", "customers", "customers_pkey")
         self.assertIndexExists("reporting", "customers", "cust_email_idx")
 
 
-    def test_exclusive_select_subsetting(self):
-        """Tests the original behavior: if '*' is not present, 'select' is an exclusive list."""
+    def test_column_omission_and_transform(self):
+        """Tests creating a subset of a table by omitting and transforming columns."""
         jobs_config = {
             "selective_transfer": {
                 "source": {"database": SOURCE_DB_URL, "schema": "sales"},
                 "target": {"database": TARGET_DB_URL, "schema": "reporting"},
                 "tables": {
                     "customers": {
-                        "select": { "name": "UPPER(name)", "email": "LOWER(email)" },
+                        "transform": {
+                            "name": "UPPER(name)",
+                            "email": "LOWER(email)",
+                            "id": None, # Omit this column
+                            "is_active": None # Omit this column
+                        },
                         "where": "is_active = true"
                     },
                 },
@@ -79,7 +85,7 @@ class TestPgXmat(PgXmatIntegrationTestBase):
 
         self.assertTableRowCount("reporting", "customers", 2)
         columns = self.get_table_columns("reporting", "customers")
-        self.assertEqual(columns, {"name", "email"}, "Target table should only contain columns from 'select'.")
+        self.assertEqual(columns, {"name", "email"}, "Target table should only contain non-omitted columns.")
 
         row = self.get_row_where("reporting", "customers", ("name", "email"), {"name": "ALICE"})
         self.assertIsNotNone(row, "Query for ALICE should return a row.")
@@ -87,16 +93,16 @@ class TestPgXmat(PgXmatIntegrationTestBase):
         self.assertEqual(row, ('ALICE', 'alice@example.com'))
 
 
-    def test_splat_transform_and_keep_rest(self):
-        """Tests using '*' to transform some columns and keep the rest as-is."""
+    def test_transform_keeps_other_columns(self):
+        """Tests that transforming one column keeps the others as-is."""
         jobs_config = {
-            "splat_job": {
+            "transform_job": {
                 "source": {"database": SOURCE_DB_URL, "schema": "sales"},
                 "target": {"database": TARGET_DB_URL, "schema": "reporting"},
-                "tables": { "customers": { "select": { "email": "LOWER(email)", "*": True } } },
+                "tables": { "customers": { "transform": { "email": "LOWER(email)" } } },
             }
         }
-        self.run_job("splat_job", jobs_config)
+        self.run_job("transform_job", jobs_config)
 
         self.assertTableRowCount("reporting", "customers", 3)
         columns = self.get_table_columns("reporting", "customers")
@@ -113,20 +119,20 @@ class TestPgXmat(PgXmatIntegrationTestBase):
         self.assertEqual(alice_row[0], 'Alice', "Name should be unchanged.")
 
 
-    def test_splat_transform_and_exclude(self):
-        """Tests using '*' to transform some, exclude some (with None), and keep the rest."""
+    def test_transform_and_omit(self):
+        """Tests transforming one column and omitting another."""
         jobs_config = {
-            "exclude_job": {
+            "omit_job": {
                 "source": {"database": SOURCE_DB_URL, "schema": "sales"},
                 "target": {"database": TARGET_DB_URL, "schema": "reporting"},
                 "tables": {
                     "customers": {
-                        "select": { "name": "UPPER(name)", "is_active": None, "*": True },
+                        "transform": { "name": "UPPER(name)", "is_active": None },
                     },
                 },
             }
         }
-        self.run_job("exclude_job", jobs_config)
+        self.run_job("omit_job", jobs_config)
 
         self.assertTableRowCount("reporting", "customers", 3)
         columns = self.get_table_columns("reporting", "customers")
@@ -147,8 +153,8 @@ class TestPgXmat(PgXmatIntegrationTestBase):
                 "tables": {
                     "*": {
                         "where": "is_active = true",
-                        # Exclude notes and email from any table, and keep the rest
-                        "select": {"order_notes": None, "email": None, "*": True},
+                        # Exclude notes and email from any table that has them
+                        "transform": {"order_notes": None, "email": None},
                     }
                 },
             }

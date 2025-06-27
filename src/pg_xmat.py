@@ -44,57 +44,47 @@ def _build_where_clause(filters: Optional[Union[str, Dict[str, Any]]]) -> str:
     return f" WHERE {' AND '.join(conditions)}" if conditions else ""
 
 
-def _build_select_list(
+def _build_column_lists(
     source_conn: "connection",
     source_schema: str,
     table_name: str,
-    select_config: Optional[Dict[str, Optional[Union[str, bool]]]],
+    transform_config: Optional[Dict[str, Optional[str]]],
 ) -> Tuple[str, List[str]]:
     """
-    Builds the SELECT list for a query based on the select_config.
-    - If config is empty/None, select all columns.
-    - If '*' is in config, select all source columns except those set to None,
-      and apply transformations for others.
-    - Otherwise, the config is an exclusive list of columns/expressions to select.
+    Builds the SELECT list and the list of target columns for a transfer.
+    By default, all source columns are copied. The transform_config can override this.
+    - A string value in the config transforms a column's value.
+    - A None value in the config excludes the column from the target.
     """
     source_columns = [
         c["column_name"]
         for c in utils.get_table_columns(source_conn, source_schema, table_name)
     ]
 
-    if not select_config:
-        select_expressions = [utils.quote_sql_identifier(c) for c in source_columns]
-        return ", ".join(select_expressions), source_columns
+    transform_config = transform_config or {}
 
-    final_columns = []
+    final_target_columns = []
     select_expressions = []
-    processed_cols = set()
 
-    # Handle splat (*) logic first
-    if "*" in select_config:
-        # Process explicit transforms and exclusions first
-        for col, expr in select_config.items():
-            if col == "*":
-                continue
-            if isinstance(expr, str): # It's a transform
-                select_expressions.append(f"{expr} AS {utils.quote_sql_identifier(col)}")
-                final_columns.append(col)
-            # If expr is None, it's an exclusion, so we do nothing but mark as processed.
-            processed_cols.add(col)
+    # Iterate over source columns to maintain order and apply transformations
+    for col_name in source_columns:
+        # Check if this column is explicitly excluded (e.g., {"col": None})
+        if transform_config.get(col_name) is None and col_name in transform_config:
+            continue
 
-        # Now add the remaining source columns
-        for col in source_columns:
-            if col not in processed_cols:
-                select_expressions.append(utils.quote_sql_identifier(col))
-                final_columns.append(col)
-    else:
-        # Exclusive list logic (original behavior)
-        for col, expr in select_config.items():
-            if isinstance(expr, str): # Only process string expressions
-                select_expressions.append(f"{expr} AS {utils.quote_sql_identifier(col)}")
-                final_columns.append(col)
+        final_target_columns.append(col_name)
 
-    return ", ".join(select_expressions), final_columns
+        # Check if there's a transformation expression for the column
+        expression = transform_config.get(col_name)
+        if isinstance(expression, str):
+            select_expressions.append(
+                f"{expression} AS {utils.quote_sql_identifier(col_name)}"
+            )
+        else:
+            # No transformation, just select the column as is
+            select_expressions.append(utils.quote_sql_identifier(col_name))
+
+    return ", ".join(select_expressions), final_target_columns
 
 
 def _validate_schema(data: Union[T, Dict[str, Any]], schema_class: type[T]) -> T:
@@ -151,8 +141,8 @@ def run_job(job: Union[Job, Dict[str, Any]], verbose: bool = False):
                 continue
 
             # We need to know the final columns to create the table correctly
-            _, final_columns = _build_select_list(
-                source_conn, source_schema, table_name, table_config.select
+            _, final_columns = _build_column_lists(
+                source_conn, source_schema, table_name, table_config.transform
             )
             table_column_map[table_name] = final_columns
 
@@ -177,8 +167,8 @@ def run_job(job: Union[Job, Dict[str, Any]], verbose: bool = False):
             q_table = utils.quote_sql_identifier(table_name)
 
             where_clause = _build_where_clause(table_config.where)
-            select_list, selected_columns = _build_select_list(
-                source_conn, source_schema, table_name, table_config.select
+            select_list, selected_columns = _build_column_lists(
+                source_conn, source_schema, table_name, table_config.transform
             )
 
             # This should now match what create_local_table_structure used
