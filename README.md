@@ -93,7 +93,7 @@ This architecture allows pg-xcopy to stream data between any two databases the c
 -   **Ideal for:** Orchestrating complex, multi-dependency workflows that require scheduling, monitoring, and retries.
 -   **Not ideal for:** Simple, point-to-point data transfers that do not require a separate, persistent orchestration infrastructure.
 
-## CLI API
+## CLI
 
 ```bash
 pg-xcopy [job_pattern] [options]
