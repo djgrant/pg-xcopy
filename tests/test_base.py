@@ -71,6 +71,14 @@ class PgXmatIntegrationTestBase(unittest.TestCase):
             cursor.execute("SELECT 1 FROM information_schema.tables WHERE table_schema = %s AND table_name = %s;", (schema_name, table_name))
             self.assertIsNotNone(cursor.fetchone(), msg or f"Table '{schema_name}.{table_name}' should exist but doesn't.")
 
+    def assertIndexExists(self, schema_name, table_name, index_name, msg=None):
+        with self.target_conn.cursor() as cursor:
+            cursor.execute("""
+                SELECT 1 FROM pg_indexes
+                WHERE schemaname = %s AND tablename = %s AND indexname = %s;
+            """, (schema_name, table_name, index_name))
+            self.assertIsNotNone(cursor.fetchone(), msg or f"Index '{index_name}' on table '{schema_name}.{table_name}' should exist but doesn't.")
+
     def assertTableRowCount(self, schema_name, table_name, expected_count, msg=None):
         safe_table_name = f'"{schema_name}"."{table_name}"'
         with self.target_conn.cursor() as cursor:

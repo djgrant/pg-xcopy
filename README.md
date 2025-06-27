@@ -33,8 +33,8 @@ JOBS = {
         "tables": {
             "users": {"where": {"active": True}},
             "profiles": {
-                "where": {"user_id": [1, 2, 3, 4]}}
-                "select": { "inserted_at": "current_date" },
+                "where": {"user_id": [1, 2, 3, 4]},
+                "select": { "inserted_at": "current_date" }
             }
         }
     }
@@ -52,10 +52,10 @@ pg-xmat "export:*"
 
 ## How it works
 
-1. **Schema Preparation**: Drops and recreates target schema, then replicates table structures from source
-2. **Query Building**: Constructs filtered SELECT queries based on your `where` and `select` configurations
-3. **Streaming Transfer**: Uses PostgreSQL's `COPY` command to stream data directly between databases
-4. **Constraint Replication**: Copies indexes, foreign keys, and constraints using `pg_dump --section=post-data`
+1. **Schema Preparation**: Drops and recreates target schema, then replicates table structures from source.
+2. **Query Building**: Constructs filtered SELECT queries based on your `where` and `select` configurations.
+3. **Streaming Transfer**: Uses PostgreSQL's `COPY` command to stream data directly between databases.
+4. **Constraint Replication**: Replicates Primary Keys, Foreign Keys, and other constraints from the source tables to the newly created target tables.
 
 The process is designed to be fast and maintain data integrity by leveraging PostgreSQL's native bulk operations rather than row-by-row processing.
 
@@ -72,6 +72,27 @@ Options:
   -v, --verbose         Enable verbose logging
   -h, --help            Show help message
 ```
+
+## Python API
+
+### Basic Usage
+
+```python
+from pg_xmat import run_job, run_jobs
+
+# Run a single job
+job_config = {
+    "source": {"database": "postgresql://...", "schema": "public"},
+    "target": {"database": "postgresql://...", "schema": "staging"},
+    "tables": {"users": {"where": {"active": True}}}
+}
+run_job(job_config, verbose=True)
+
+# Run multiple jobs with pattern matching
+jobs_config = {"export:users": job_config, "export:orders": {...}}
+run_jobs("export:*", jobs_config, verbose=True)
+```
+
 
 ## Job API
 
@@ -100,42 +121,69 @@ JOBS = {
 
 ### Where Filters
 
-Filter data during transfer using various condition types:
+Filter data during transfer using the structured dictionary syntax or a raw SQL string.
+
+#### Structured Filters
+
+For common equality, range, and `IN` clauses, use the dictionary format:
 
 ```python
 "where": {
-    # Exact match
+    # Exact match: "status" = 'active'
     "status": "active",
 
-    # IN clause (list/tuple)
+    # IN clause: "user_id" IN (1, 2, 3, 4)
     "user_id": [1, 2, 3, 4],
-    "category": ("A", "B", "C"),
 
-    # Range queries (dict)
-    "created_at": {"gte": "2023-01-01", "lte": "2023-12-31"},
-    "price": {"gte": 100},
-    "score": {"lte": 90},
+    # Range queries: "created_at" >= '2023-01-01'
+    "created_at": {"gte": "2023-01-01"},
 
-    # Boolean values
-    "is_active": True,
-    "is_deleted": False,
+    # Boolean values: "is_active" = true
+    "is_active": True
 }
+```
+
+#### Raw SQL Filter
+
+For more complex conditions, provide a raw SQL string. The string is used as the body of the `WHERE` clause.
+
+```python
+"where": "is_active = true AND (category = 'A' OR name LIKE 'Test%')"
 ```
 
 ### Select Transformations
 
-Transform columns during transfer using SQL expressions:
+The `select` config allows you to precisely control the columns in the target table. It has two modes: exclusive (default) and inclusive (using a `*` wildcard).
+
+#### Exclusive Column Selection (Default)
+If the `select` dictionary does not contain a `"*"` key, it acts as an **exclusive list**. Only the columns defined in the dictionary will be created in the target table. This is useful for creating a subset of the original table.
 
 ```python
 "select": {
-    "created_at": "DATE({column_name})",                   # Extract date part
-    "full_name": "CONCAT(first_name, ' ', last_name)",     # Concatenate columns
-    "shifted_date": "{column_name} + INTERVAL '30 days'",  # Date arithmetic
-    "normalized_email": "LOWER(TRIM({column_name}))"       # Text normalization
+    # The target table will have only two columns: `name` and `email`.
+    "name": "UPPER(name)",               # Transform the 'name' column
+    "email": "LOWER(email)"              # Transform the 'email' column
 }
 ```
 
-The `{column_name}` placeholder is automatically replaced with the properly quoted column name.
+#### Select *
+
+To transfer all source columns while transforming or excluding a few, add `"*": True` to the `select` dictionary.
+
+```python
+"select": {
+    # Include all columns from the source table by default
+    "*": True,
+
+    # Transform the 'email' column using a SQL function
+    "email": "LOWER(email)",
+
+    # Exclude the 'last_login_ip' column completely from the target table
+    "last_login_ip": None
+
+    # All other columns (e.g., 'id', 'name') will be copied as-is
+}
+```
 
 ### Wildcard Tables
 
@@ -144,31 +192,35 @@ Process all tables in a schema:
 ```python
 "tables": {
     "*": {
-        "where": {"tenant_id": 123}  # Applied to all tables that have this column
+        "where": {"tenant_id": 123}
     }
 }
 ```
 
-## Python API
+### Constraint Replication
 
-### Basic Usage
+After transferring data, pg-xmat attempts to replicate constraints from the source to the target tables.
 
-```python
-from pg_xmat import run_job, run_jobs
+**What is Replicated:**
+- Primary Keys
+- Foreign Keys
+- Unique Constraints
+- Check Constraints
 
-# Run a single job
-job_config = {
-    "source": {"database": "postgresql://...", "schema": "public"},
-    "target": {"database": "postgresql://...", "schema": "staging"},
-    "tables": {"users": {"where": {"active": True}}}
-}
-run_job(job_config, verbose=True)
+**What is NOT Replicated:**
+- Triggers
+- Row-Level Security Policies
 
-# Run multiple jobs with pattern matching
-jobs_config = {"export:users": job_config, "export:orders": {...}}
-run_jobs("export:*", jobs_config, verbose=True)
-```
+#### Caveats and Limitations
 
+Constraint replication is **best-effort** and works best when the target table structure is a mirror of the source. The process will fail for a specific constraint if `select` transformations alter the table's structure in a way that makes the constraint invalid.
+
+Common failure scenarios include:
+- **Excluding a column** that is part of a constraint (e.g., excluding a primary key column or a foreign key column).
+- **Renaming a column** that is referenced in a constraint. The replication attempts to use the original column name, which no longer exists in the target table.
+- **Excluding a referenced table**. A foreign key from `orders` to `customers` cannot be created if the `customers` table was not also transferred.
+
+When a constraint fails to apply, `pg-xmat` prints an informational warning and **continues the job**. This is often expected behavior, as a transformed or subsetted table may not be able to support the same constraints as the original.
 
 ## Examples
 
@@ -195,10 +247,13 @@ ANONYMIZE_JOB = {
     "tables": {
         "users": {
             "select": {
+                # Keep all columns except the ones we transform or exclude.
+                # This ensures columns like `id` and `created_at` are copied.
+                "*": True,
                 # Replace real emails with user1@example.com, user2@example.com, etc.
                 "email": "'user' || id || '@example.com'",
-                # Generate fake phone numbers like +15550000001, +15550000002, etc.
-                "phone": "'+1555' || LPAD(id::text, 7, '0')",
+                # Exclude personal phone numbers from the test database
+                "phone": None,
                 # Replace real names with "Test User 1", "Test User 2", etc.
                 "name": "'Test User ' || id"
             }
@@ -214,10 +269,14 @@ SHIFT_JOB = {
     "source": {"database": PROD_DB_URL, "schema": "events"},
     "target": {"database": TEST_DB_URL, "schema": "events"},
     "tables": {
+        # Apply transformations to all tables in the 'events' schema
         "*": {
             "select": {
-                "created_at": "{column_name} + (CURRENT_DATE - DATE '2023-06-01')",
-                "updated_at": "{column_name} + (CURRENT_DATE - DATE '2023-06-01')"
+                # Copy all columns from each source table
+                "*": True,
+                # Shift timestamp columns if they exist in a table.
+                "created_at": "created_at + (CURRENT_DATE - DATE '2023-06-01')",
+                "updated_at": "updated_at + (CURRENT_DATE - DATE '2023-06-01')"
             }
         }
     }
@@ -241,7 +300,7 @@ TENANT_EXPORT = {
 ## Requirements
 
 - Python 3.7+
-- PostgreSQL client tools (`psql`, `pg_dump`)
+- PostgreSQL client tools (`psql`)
 - Network access between source and target databases
 
 ## Security

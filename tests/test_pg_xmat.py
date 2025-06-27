@@ -14,11 +14,29 @@ class TestPgXmat(PgXmatIntegrationTestBase):
                     is_active BOOLEAN DEFAULT true
                 );
             """)
+            # Add a standalone index to test replication
+            cursor.execute("CREATE INDEX cust_email_idx ON sales.customers (email);")
+
             cursor.execute(
                 "INSERT INTO sales.customers (name, email, is_active) VALUES (%s, %s, %s), (%s, %s, %s), (%s, %s, %s);",
                 ('Alice', 'alice@example.com', True,
                  'Bob', 'BOB@EXAMPLE.COM', True,
                  'Charlie', 'charlie@example.com', False)
+            )
+            # Add a second table for wildcard testing
+            cursor.execute("""
+                CREATE TABLE sales.orders (
+                    order_id SERIAL PRIMARY KEY,
+                    customer_id INTEGER,
+                    amount DECIMAL(10, 2),
+                    is_active BOOLEAN DEFAULT true,
+                    order_notes TEXT
+                );
+            """)
+            cursor.execute(
+                "INSERT INTO sales.orders (customer_id, amount, is_active, order_notes) VALUES (%s, %s, %s, %s), (%s, %s, %s, %s);",
+                (1, 100.50, True, 'Note for active order',
+                 3, 25.00, False, 'Note for inactive order')
             )
         self.source_conn.commit()
 
@@ -39,6 +57,8 @@ class TestPgXmat(PgXmatIntegrationTestBase):
         self.assertTableRowCount("reporting", "customers", 3)
         columns = self.get_table_columns("reporting", "customers")
         self.assertEqual(columns, {"id", "name", "email", "is_active"}, "All columns should be mirrored.")
+        self.assertIndexExists("reporting", "customers", "customers_pkey")
+        self.assertIndexExists("reporting", "customers", "cust_email_idx")
 
 
     def test_exclusive_select_subsetting(self):
@@ -116,6 +136,38 @@ class TestPgXmat(PgXmatIntegrationTestBase):
         self.assertIsNotNone(alice_row, "Query for Alice's transformed name should return a row.")
         assert alice_row is not None
         self.assertEqual(alice_row[0], 'ALICE', "Name should have been upper-cased.")
+
+
+    def test_wildcard_table_processing(self):
+        """Tests using '*' as a table name to process all tables in a schema."""
+        jobs_config = {
+            "wildcard_job": {
+                "source": {"database": SOURCE_DB_URL, "schema": "sales"},
+                "target": {"database": TARGET_DB_URL, "schema": "reporting"},
+                "tables": {
+                    "*": {
+                        "where": "is_active = true",
+                        # Exclude notes and email from any table, and keep the rest
+                        "select": {"order_notes": None, "email": None, "*": True},
+                    }
+                },
+            }
+        }
+        self.run_job("wildcard_job", jobs_config)
+
+        self.assertSchemaExists("reporting")
+
+        # Verify 'customers' table was processed by the wildcard
+        self.assertTableExists("reporting", "customers")
+        self.assertTableRowCount("reporting", "customers", 2, "Should only transfer active customers.")
+        customer_cols = self.get_table_columns("reporting", "customers")
+        self.assertEqual(customer_cols, {"id", "name", "is_active"}, "Email column should be excluded from customers.")
+
+        # Verify 'orders' table was also processed by the wildcard
+        self.assertTableExists("reporting", "orders")
+        self.assertTableRowCount("reporting", "orders", 1, "Should only transfer active orders.")
+        order_cols = self.get_table_columns("reporting", "orders")
+        self.assertEqual(order_cols, {"order_id", "customer_id", "amount", "is_active"}, "order_notes column should be excluded from orders.")
 
 
 if __name__ == "__main__":
